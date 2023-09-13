@@ -1,61 +1,62 @@
 pipeline {
-  agent {
-    docker {
-      image 'chetanachetule/maven-plus-docker'
-      args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
-    }
-  }
-  stages {
-    stage('Build and Test') {
-      steps {
-        // build the project and create a JAR file
-        sh 'mvn clean package'
-      }
-    }
-    stage('Code Analysis with SonarQube') {
-      environment {
-        SONAR_URL = "http://43.204.28.255:9000"
-      }
-      steps {
-        withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
-          sh 'mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}'
+    agent {
+        docker {
+            image 'chetanachetule/maven-plus-docker' // Use a Maven and Docker image
+            args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // Mount Docker socket to access host's Docker daemon
         }
-      }
     }
-    stage('Build and Push Docker Image') {
-      environment {
-        DOCKER_IMAGE = "chetanachetule/java_awesome-cicd:${BUILD_NUMBER}"
-        REGISTRY_CREDENTIALS = credentials('dockerHub')
-      }
-      steps {
-        script {
-            sh 'docker build -t ${DOCKER_IMAGE} .'
-            def dockerImage = docker.image("${DOCKER_IMAGE}")
-            docker.withRegistry('https://index.docker.io/v1/', "dockerHub") {
-                dockerImage.push()
+    environment {
+        SONAR_URL = "http://sonarqube-server:9000" // Update with your SonarQube server URL
+        DOCKER_IMAGE = "your-dockerhub-username/project-name:${BUILD_NUMBER}"
+    }
+    stages {
+        stage('Build') {
+            steps {
+                sh 'mvn clean package'
             }
         }
-      }
-    }
-    stage('Update Deployment File') {
-        environment {
-            GIT_REPO_NAME = "agro---proo"
-            GIT_USER_NAME = "chetanachetule"
-        }
-        steps {
-            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                sh '''
-                    git config user.email "chetulechetana@gmail.com"
-                    git config user.name "chetanachetule"
-                    BUILD_NUMBER=${BUILD_NUMBER}
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" manifests/deployment.yml
-                    git add manifests/deployment.yml
-                    git add target/
-                    git commit -m "Update image version ${BUILD_NUMBER}"
-                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
-                '''
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh "mvn sonar:sonar -Dsonar.host.url=${https://43.204.28.255:9000} -Dsonar.login=${SONAR_AUTH_TOKEN}"
+                }
             }
         }
-    }
-  }
+        stage('Docker Build and Push') {
+            steps {
+                script {
+                    sh "docker build -t ${DOCKER_IMAGE} ."
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USERNAME', passwordVariable: 'DOCKERHUB_PASSWORD')]) {
+                        sh "docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD}"
+                        sh "docker push ${DOCKER_IMAGE}"
+                    }
+                }
+            }
+        }
+        stage('GitHub Update') {
+            steps {
+                script {
+                    // Replace with your GitHub repository details
+                    def GIT_REPO_NAME = "your/repo"
+                    def GIT_USER_NAME = "your-username"
+                    def GIT_BRANCH = "main" // Replace with your branch
+
+                    // Configure Git
+                    git branch: GIT_BRANCH, credentialsId: 'github-credentials', url: "https://github.com/${GIT_REPO_NAME}.git"
+
+                    // Update deployment file (e.g., Kubernetes YAML)
+                    sh "sed -i 's#image:.*#image: ${DOCKER_IMAGE}#' deployment.yaml"
+                    
+                    // Commit and push changes to GitHub
+                    sh """
+                        git config user.email "your-email@example.com"
+                        git config user.name "${GIT_USER_NAME}"
+                        git add deployment.yaml
+                        git commit -m "Update Docker image tag"
+                        git push origin ${GIT_BRANCH}
+                    """
+                }
+            }
+        }
+    }
 }
